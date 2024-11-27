@@ -33,16 +33,16 @@ wine/prefix: wine/.sentinel wine/share/wine/mono/.sentinel wine/env.sh
 wine.dwarfs: wine/prefix
 	mkdwarfs -o wine.dwarfs -i wine
 
-wine.run: wine.dwarfs embed.sh
-	cat embed.sh wine.dwarfs > wine.run
-	chmod +x wine.run
+barrels: wine.dwarfs embed.sh
+	cat embed.sh wine.dwarfs > barrels
+	chmod +x barrels
 
 unmount:
 	mountpoint -q mnt/wine && fusermount -u mnt/wine
 	rm -rf mnt
 
 clean: unmount
-	rm -rf wine overlay wine.dwarfs	wine.run
+	rm -rf wine overlay wine.dwarfs barrels
 
 .PHONY: clean unmount
 

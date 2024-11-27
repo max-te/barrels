@@ -6,7 +6,7 @@ A tool for creating portable, self-contained Wine environments using [dwarfs](ht
 
 ## Overview
 
-Barrels packages Wine and Wine Mono ([Kron4ek builds](https://github.com/Kron4ek/Wine-Builds)) into a single compressed archives using the dwarfs filesystem. The main executable (`wine.run`) serves as both a Wine environment and a driver for creating and running application containers, allowing you to create portable Windows application packages that can run anywhere with just the driver and the application's `.dwarfs` container.
+Barrels packages Wine and Wine Mono ([Kron4ek builds](https://github.com/Kron4ek/Wine-Builds)) into a single compressed archives using the dwarfs filesystem. The main executable (`barrels`) serves as both a Wine environment and a driver for creating and running application containers, allowing you to create portable Windows application packages that can run anywhere with just the driver and the application's `.dwarfs` container.
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ Barrels packages Wine and Wine Mono ([Kron4ek builds](https://github.com/Kron4ek
 To build the Wine environment driver:
 
 ```bash
-make wine.run
+make barrels
 ```
 
 This will:
@@ -37,7 +37,7 @@ This will:
 To create a new application container:
 
 ```bash
-./wine.run --create <app>.dwarfs
+./barrels --create <app>.dwarfs
 ```
 
 This will set up the necessary mounts and Wine prefix.
@@ -51,7 +51,7 @@ Once you're done, exit the shell, and the application container will be created.
 To run a packaged application:
 
 ```bash
-./wine.run <app>.dwarfs
+./barrels <app>.dwarfs
 ```
 
 The application container will be mounted and launched according to its entrypoint script.

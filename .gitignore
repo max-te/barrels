@@ -2,4 +2,4 @@
 /wine
 *.tar.gz
 *.dwarfs
-*.run
+/barrels
