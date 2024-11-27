@@ -1,0 +1,5 @@
+/mnt
+/wine
+*.tar.gz
+*.dwarfs
+*.run
