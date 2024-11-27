@@ -2,16 +2,16 @@
 
 Version 1: Alder
 
-A tool for creating portable, self-contained Wine environments using dwarfs filesystem compression. It allows you to package Windows applications (primarily games) into portable containers that can be easily distributed and run on Linux systems.
+A tool for creating portable, self-contained Wine environments using [dwarfs](https://github.com/mhx/dwarfs) compressed filesystem images. It allows you to package Windows applications (primarily games) into portable containers that can be easily distributed and run on Linux systems.
 
 ## Overview
 
-Barrels packages Wine and Wine Mono into a single compressed archives using the dwarfs filesystem. The main executable (`wine.run`) serves as both a Wine environment and a driver for creating and running application containers, allowing you to create portable Windows application packages that can run anywhere with just the driver and the application's `.dwarfs` container.
+Barrels packages Wine and Wine Mono ([Kron4ek builds](https://github.com/Kron4ek/Wine-Builds)) into a single compressed archives using the dwarfs filesystem. The main executable (`wine.run`) serves as both a Wine environment and a driver for creating and running application containers, allowing you to create portable Windows application packages that can run anywhere with just the driver and the application's `.dwarfs` container.
 
 ## Prerequisites
 
 - Linux system
-- [dwarfs](https://github.com/mhx/dwarfs) filesystem tools (`mkdwarfs`)
+- dwarfs filesystem tools (`dwarfs`, `mkdwarfs`)
 - fuse-overlayfs
 - wget
 - Basic build tools (make, tar)
