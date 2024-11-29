@@ -48,10 +48,74 @@ launch() {
 if [ -z "$1" ]; then
     echo "Usage: $0 <app.dwarfs>"
     echo "or:    $0 --create <app.dwarfs>"
+    echo "or:    $0 --edit <app.dwarfs>"
     exit 1
 fi
 
-if [ "$1" == "--create" ]; then
+if [ "$1" == "--edit" ]; then
+    if [ -z "$2" ]; then
+        echo "Usage: $0 --edit <app.dwarfs>"
+        exit 1
+    fi
+    APP=$2
+    APPNAME=$(basename $APP .dwarfs)
+
+    if [ ! -f "$APP" ]; then
+        echo "Error: $APP does not exist"
+        exit 1
+    fi
+
+    TEMP=$(mktemp -d -p $PWD -t tmp.dwarf-$APPNAME-XXXXXX)
+    echo "Mounting on $TEMP"
+
+    cleanup_edit() {
+        mountpoint -q $TEMP/mnt/combined && fusermount -u $TEMP/mnt/combined
+        mountpoint -q $TEMP/mnt/final && fusermount -u $TEMP/mnt/final
+        mountpoint -q $TEMP/mnt/wine && fusermount -u $TEMP/mnt/wine
+        mountpoint -q $TEMP/mnt/app && fusermount -u $TEMP/mnt/app
+        rm -r $TEMP
+    }
+    trap cleanup_edit EXIT
+
+    mkdir -p $TEMP/edit $TEMP/final-work $TEMP/mnt/{wine,app,combined,final} $TEMP/work
+
+    dwarfs $0 -o offset=auto,noatime $TEMP/mnt/wine
+    dwarfs $APP -o offset=auto,noatime $TEMP/mnt/app
+    fuse-overlayfs -o lowerdir=$TEMP/mnt/wine:$TEMP/mnt/app,upperdir=$TEMP/edit,workdir=$TEMP/work,squash_to_uid=$(id -u),squash_to_gid=$(id -g) $TEMP/mnt/combined
+
+    source $TEMP/mnt/combined/env.sh
+    echo "Prepared mounts for editing $APPNAME."
+    echo "You are now dropped into a bash shell where you can modify your app using wine."
+    echo "The existing app image is mounted read-only, and your changes will be saved to a new image."
+    echo "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
+
+    pushd $TEMP/mnt/combined
+    "$SHELL"
+    if [ $? != 0 ]; then
+        exit 1
+    fi
+    popd
+
+    echo "Creating new image with your changes..."
+    fusermount -u $TEMP/mnt/combined
+
+    # Mount a new overlay combining the app image and edits
+    fuse-overlayfs -o lowerdir=$TEMP/mnt/app,upperdir=$TEMP/edit,workdir=$TEMP/final-work $TEMP/mnt/final
+
+    # Create new image at temporary location
+    mkdwarfs -o "${APP}.new" -i $TEMP/mnt/final --set-owner=1000 --set-group=1000
+
+    # Clean up mounts
+    fusermount -u $TEMP/mnt/final
+    fusermount -u $TEMP/mnt/app
+    fusermount -u $TEMP/mnt/wine
+
+    # Move files into place only after everything is unmounted
+    mv "$APP" "${APP}.backup"
+    mv "${APP}.new" "$APP"
+    
+    echo "New image created successfully. Original image backed up as ${APP}.backup"
+elif [ "$1" == "--create" ]; then
     if [ -z "$2" ]; then
         echo "Usage: $0 --create <app.dwarfs>"
         exit 1
