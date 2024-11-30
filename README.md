@@ -46,14 +46,33 @@ You now need to do the following:
 2. Create an `entrypoint.sh` script (example provided in `example-entrypoint.sh`)
 Once you're done, exit the shell, and the application container will be created.
 
+### Editing Application Containers
+
+To modify an existing application container:
+
+```bash
+./barrels --edit <app>.dwarfs
+```
+
+This will mount the existing container and allow you to make changes to it.
+The original container will be backed up as `<app>.dwarfs.backup` before creating
+the new container with your changes.
+
 ### Running Applications
 
 To run a packaged application:
 
 ```bash
-./barrels <app>.dwarfs
+./barrels <app>.dwarfs [-- <args>]
 ```
 
 The application container will be mounted and launched according to its entrypoint script.
+Any arguments after `--` will be passed to the entrypoint script.
+
+Alternatively, you can specify a command to run instead of the entrypoint:
+
+```bash
+./barrels <app>.dwarfs <command> [<args>...]
+```
 
 User data will be stored in `~/.local/share/dwarf-<app>`.
