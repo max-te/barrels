@@ -23,6 +23,7 @@ wine/share/wine/mono/.sentinel: wine-mono-${WINE_MONO_VERSION}-x86.tar.xz
 	touch $@
 
 wine/env.sh: env.sh
+	shellcheck env.sh
 	cp env.sh wine/
 
 wine/prefix: wine/.sentinel wine/share/wine/mono/.sentinel wine/env.sh
@@ -33,7 +34,11 @@ wine/prefix: wine/.sentinel wine/share/wine/mono/.sentinel wine/env.sh
 wine.dwarfs: wine/prefix
 	mkdwarfs -o wine.dwarfs -i wine
 
+lint: *.sh
+	shellcheck $^
+
 barrels: wine.dwarfs embed.sh
+	shellcheck embed.sh
 	cat embed.sh wine.dwarfs > barrels
 	chmod +x barrels
 
@@ -44,5 +49,4 @@ unmount:
 clean: unmount
 	rm -rf wine overlay wine.dwarfs barrels
 
-.PHONY: clean unmount
-
+.PHONY: clean unmount lint
