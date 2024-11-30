@@ -36,11 +36,11 @@ launch() {
     dwarfs $APP -o offset=auto,noatime $TEMP/mnt/app
     fuse-overlayfs -o lowerdir=$TEMP/mnt/wine:$TEMP/mnt/app,upperdir=$USERDATA/data,workdir=$USERDATA/work,squash_to_uid=$(id -u),squash_to_gid=$(id -g) $TEMP/mnt/combined
 
-    if [ -n "$2" ]; then
+    if [[ -n "$2" && "$2" != "--" ]]; then
         "${@:2}"
         exit $?
     else
-        $TEMP/mnt/combined/entrypoint.sh
+        $TEMP/mnt/combined/entrypoint.sh "${@:3}"
         exit $?
     fi
 }
