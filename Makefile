@@ -2,7 +2,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 
-WINE_VERSION = 9.22
+WINE_VERSION = 10.1
 WINE_MONO_VERSION = 9.4.0
 WINE_FLAVOR = staging-tkg-amd64-wow64
 
