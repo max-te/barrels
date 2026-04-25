@@ -76,3 +76,43 @@ Alternatively, you can specify a command to run instead of the entrypoint:
 ```
 
 User data will be stored in `~/.local/share/dwarf-<app>`.
+
+### Bundling Images into an AppImage
+
+You can distribute an application as a self-contained AppImage by packaging the `wine.dwarfs` archive,
+and the application's `.dwarfs` container and a driver AppRun script together.
+
+**Required AppDir layout:**
+
+```
+MyApp.AppDir/
+├── AppRun              # Startup script (see apprun.sh for the template)
+├── myapp.desktop       # Standard .desktop entry (Icon= must match the png basename)
+├── myapp.png           # Application icon (also symlinked / copied as .DirIcon)
+├── myapp.dwarfs        # The application container created with --create
+├── wine.dwarfs         # The Wine environment (output of `make barrels`)
+└── bin/                # vendor dwarfs and fuse-overlayfs here
+    ├── dwarfs
+    └── fuse-overlayfs
+```
+
+**Steps:**
+
+1. Build `wine.dwarfs` with `make barrels` and create `myapp.dwarfs` with `./barrels --create myapp.dwarfs`.
+2. Create the AppDir and populate it as shown above. Copy `apprun.sh` to `MyApp.AppDir/AppRun` and make it executable.
+   - Edit the `APP=` line in `AppRun` to point to your `.dwarfs` file (or use the auto-detection logic from `apprun.sh`).
+   - Place `dwarfs` and `fuse-overlayfs` binaries in `AppDir/bin/`.
+3. Create the `.desktop` file with at minimum `Type`, `Name`, `Icon`, and `Categories` keys.
+    ```
+      [Desktop Entry]
+      Type=Application
+      Name=MyApp
+      Icon=myapp
+      Categories=Game;
+    ```
+4. Symlink or copy the icon as `.DirIcon` inside the AppDir.
+5. Pack the AppDir into an AppImage using [`appimagetool`](https://github.com/AppImage/AppImageKit):
+
+```bash
+appimagetool MyApp.AppDir MyApp.AppImage
+```
