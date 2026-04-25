@@ -117,7 +117,7 @@ if [ "$1" == "--edit" ]; then
     # Move files into place only after everything is unmounted
     mv "$APP" "${APP}.backup"
     mv "${APP}.new" "$APP"
-    
+
     echo "New image created successfully. Original image backed up as ${APP}.backup"
 elif [ "$1" == "--create" ]; then
     if [ -z "$2" ]; then

@@ -2,9 +2,11 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 
-WINE_VERSION = 10.1
-WINE_MONO_VERSION = 9.4.0
+WINE_VERSION = 10.3
+WINE_MONO_VERSION = 10.0.0
 WINE_FLAVOR = staging-tkg-amd64-wow64
+
+default: clean lint barrels
 
 wine-%-${WINE_FLAVOR}.tar.xz:
 	wget https://github.com/Kron4ek/Wine-Builds/releases/download/$*/wine-$*-${WINE_FLAVOR}.tar.xz
@@ -49,4 +51,4 @@ unmount:
 clean: unmount
 	rm -rf wine overlay wine.dwarfs barrels
 
-.PHONY: clean unmount lint
+.PHONY: clean unmount lint default
