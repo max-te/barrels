@@ -18,7 +18,7 @@ TMPDIR=${XDG_RUNTIME_DIR:-/tmp}
 TEMP=$(mktemp -d -p "$TMPDIR" -t dwarf-"$APPNAME"-XXXXXX)
 echo "Mounting on $TEMP"
 
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup_launch() {
     mountpoint -q "$TEMP/mnt/combined" && fusermount -u "$TEMP/mnt/combined"
     mountpoint -q "$TEMP/mnt/wine" && fusermount -u "$TEMP/mnt/wine"
