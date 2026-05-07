@@ -2,8 +2,8 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 
-WINE_VERSION = 10.3
-WINE_MONO_VERSION = 10.0.0
+WINE_VERSION = 11.8
+WINE_MONO_VERSION = 11.1.0
 WINE_FLAVOR = staging-tkg-amd64-wow64
 
 default: clean lint barrels
