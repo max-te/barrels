@@ -12,9 +12,19 @@ if ! command -v fuse-overlayfs > /dev/null; then
     exit 1
 fi
 
+try_unmount() {
+    mountpoint -q "$1" || return
+    echo "Unmounting $1"
+    while ! fusermount -u "$1"; do
+        mountpoint -q "$1" || return
+        sleep 3
+        echo "Try agin"
+    done
+}
+
 launch() {
-    APP=$1
-    APPNAME=$(basename "$APP" .dwarfs)
+    APP="$1"
+    APPNAME=$(basename -s.dwarfs "$APP")
     USERDATA=$HOME/.local/share/dwarf-"$APPNAME"
 
     TMPDIR=${XDG_RUNTIME_DIR:-/tmp}
@@ -23,9 +33,9 @@ launch() {
 
     # shellcheck disable=SC2317,SC2329
     cleanup_launch() {
-        mountpoint -q "$TEMP/mnt/combined" && fusermount -u "$TEMP/mnt/combined"
-        mountpoint -q "$TEMP/mnt/wine" && fusermount -u "$TEMP/mnt/wine"
-        mountpoint -q "$TEMP/mnt/app" && fusermount -u "$TEMP/mnt/app"
+        try_unmount "$TEMP/mnt/combined"
+        try_unmount "$TEMP/mnt/wine"
+        try_unmount "$TEMP/mnt/app"
         rmdir "$TEMP/mnt/combined" "$TEMP/mnt/wine" "$TEMP/mnt/app"
         rm -r "$TEMP"
     }
@@ -48,20 +58,23 @@ launch() {
     fi
 }
 
-if [ -z "$1" ]; then
+printhelp() {
     echo "Usage: $0 <app.dwarfs>"
     echo "or:    $0 --create <app.dwarfs>"
     echo "or:    $0 --edit <app.dwarfs>"
     exit 1
+}
+
+if [ -z "$1" ]; then
+    printhelp
 fi
 
 if [ "$1" == "--edit" ]; then
-    if [ -z "$2" ]; then
-        echo "Usage: $0 --edit <app.dwarfs>"
-        exit 1
+    if [ -z "$2" ] || [[ "$2" == -* ]]; then
+        printhelp
     fi
     APP=$2
-    APPNAME=$(basename "$APP" .dwarfs)
+    APPNAME=$(basename -s.dwarfs "$APP" )
 
     if [ ! -f "$APP" ]; then
         echo "Error: $APP does not exist"
@@ -73,10 +86,10 @@ if [ "$1" == "--edit" ]; then
 
     # shellcheck disable=SC2317,SC2329
     cleanup_edit() {
-        mountpoint -q "$TEMP/mnt/combined" && fusermount -u "$TEMP/mnt/combined"
-        mountpoint -q "$TEMP/mnt/final" && fusermount -u "$TEMP/mnt/final"
-        mountpoint -q "$TEMP/mnt/wine" && fusermount -u "$TEMP/mnt/wine"
-        mountpoint -q "$TEMP/mnt/app" && fusermount -u "$TEMP/mnt/app"
+        try_unmount "$TEMP/mnt/combined"
+        try_unmount "$TEMP/mnt/final"
+        try_unmount "$TEMP/mnt/wine"
+        try_unmount "$TEMP/mnt/app"
         rm -r "$TEMP"
     }
     trap cleanup_edit EXIT
@@ -94,14 +107,12 @@ if [ "$1" == "--edit" ]; then
     echo "The existing app image is mounted read-only, and your changes will be saved to a new image."
     echo "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
 
-    pushd "$TEMP/mnt/combined"
-    if ! "$SHELL"; then
+    if ! (env --chdir="$TEMP/mnt/combined" PS1="[$APPNAME] \s-\v$ " /bin/bash --norc -i); then
         exit 1
     fi
-    popd
 
+    try_unmount "$TEMP/mnt/combined"
     echo "Creating new image with your changes..."
-    fusermount -u "$TEMP/mnt/combined"
 
     # Mount a new overlay combining the app image and edits
     fuse-overlayfs -o "lowerdir=$TEMP/mnt/app,upperdir=$TEMP/edit,workdir=$TEMP/final-work" "$TEMP/mnt/final"
@@ -110,9 +121,10 @@ if [ "$1" == "--edit" ]; then
     mkdwarfs -o "${APP}.new" -i "$TEMP/mnt/final" --set-owner=1000 --set-group=1000
 
     # Clean up mounts
-    fusermount -u "$TEMP/mnt/final"
-    fusermount -u "$TEMP/mnt/app"
-    fusermount -u "$TEMP/mnt/wine"
+    try_unmount "$TEMP/mnt/final"
+    try_unmount "$TEMP/mnt/wine"
+    try_unmount "$TEMP/mnt/app"
+    rm -r "$TEMP"
 
     # Move files into place only after everything is unmounted
     mv "$APP" "${APP}.backup"
@@ -120,20 +132,19 @@ if [ "$1" == "--edit" ]; then
 
     echo "New image created successfully. Original image backed up as ${APP}.backup"
 elif [ "$1" == "--create" ]; then
-    if [ -z "$2" ]; then
-        echo "Usage: $0 --create <app.dwarfs>"
-        exit 1
+    if [ -z "$2" ] || [[ "$2" == -* ]]; then
+        printhelp
     fi
     APP=$2
-    APPNAME=$(basename "$APP" .dwarfs)
+    APPNAME=$(basename -s.dwarfs "$APP")
 
     TEMP=$(mktemp -d -p "$PWD" -t tmp.dwarf-"$APPNAME"-XXXXXX)
     echo "Mounting on $TEMP"
 
     # shellcheck disable=SC2317,SC2329
     cleanup_create() {
-        mountpoint -q "$TEMP/mnt/combined" && fusermount -u "$TEMP/mnt/combined"
-        mountpoint -q "$TEMP/mnt/wine" && fusermount -u "$TEMP/mnt/wine"
+        try_unmount "$TEMP/mnt/combined"
+        try_unmount "$TEMP/mnt/wine"
         rm -r "$TEMP"
     }
     trap cleanup_create EXIT
@@ -150,17 +161,16 @@ elif [ "$1" == "--create" ]; then
     echo "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
 
     while [ ! -f "$TEMP/mnt/combined/entrypoint.sh" ]; do
-        pushd "$TEMP/mnt/combined"
-        if ! "$SHELL"; then
+        if ! (env --chdir="$TEMP/mnt/combined" PS1="[$APPNAME] \s-\v$ " /bin/bash --norc -i); then
             exit 1
         fi
-        popd
         echo "Checking for entrypoint.sh to be created in $TEMP/mnt/combined"
     done
-    fusermount -u "$TEMP/mnt/combined"
-    fusermount -u "$TEMP/mnt/wine"
+    try_unmount "$TEMP/mnt/combined"
+    try_unmount "$TEMP/mnt/wine"
 
     mkdwarfs -o "$APP" -i "$TEMP/app" --set-owner=1000 --set-group=1000
+    rm -r "$TEMP"
 else
     launch "$@"
 fi
