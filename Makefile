@@ -6,6 +6,10 @@ WINE_VERSION = 11.8
 WINE_MONO_VERSION = 11.1.0
 WINE_FLAVOR = staging-tkg-amd64-wow64
 
+EXECUTABLES = wget tar dwarfs shellcheck fuse-overlayfs
+K := $(foreach exec,$(EXECUTABLES),\
+        $(if $(shell which $(exec)),some string,$(error "No $(exec) in PATH")))
+
 default: clean lint barrels
 
 wine-%-${WINE_FLAVOR}.tar.xz:
