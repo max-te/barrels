@@ -2,4 +2,6 @@
 /wine
 *.tar.xz
 *.dwarfs
+*.AppImage
+*.AppDir
 /barrels

@@ -5,8 +5,8 @@ set -e
 cd "$APPDIR"
 export PATH="$APPDIR/bin:$PATH"
 
-APPNAME=$(basename ./*.desktop .dwarfs)
-APP="$APPNAME.desktop"
+APPNAME=$(basename -s.desktop ./*.desktop)
+APP="$APPNAME.dwarfs"
 USERDATA=$HOME/.local/share/dwarf-"$APPNAME"
 
 if [ ! -f "$APP" ]; then
