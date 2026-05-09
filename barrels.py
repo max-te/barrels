@@ -121,9 +121,94 @@ def eval_env_sh(path: Path):
     return env
 
 
-def run_interactive_shell(cwd: Path, appname: str, env: dict[str, str]):
+INIT_ENTRYPOINT_FUNC = r"""
+init_entrypoint() {
+    local filepath="$1"
+
+    if [[ -z "$filepath" ]]; then
+        echo "Usage: init_entrypoint <path-to-exe>"
+        return 1
+    fi
+    if [[ ! -f "$filepath" ]]; then
+        echo "Error: file not found: $filepath"
+        return 1
+    fi
+    if [[ ! "$filepath" =~ \.exe$ ]]; then
+        echo "Error: file must end with .exe: $filepath"
+        return 1
+    fi
+
+    if [[ -z "$BARRELS_COMBINED" ]]; then
+        echo "Error: BARRELS_COMBINED environment variable not set"
+        return 1
+    fi
+
+    # Resolve the filepath to absolute path
+    local abs_exe
+    abs_exe=$(realpath "$filepath")
+
+    # Get the absolute path of combined directory
+    local abs_combined
+    abs_combined=$(realpath "$BARRELS_COMBINED")
+
+    # Split the filepath into directory and filename
+    local abs_dir
+    abs_dir=$(dirname "$abs_exe")
+    local exe
+    exe=$(basename "$abs_exe")
+    
+    # Calculate relative path from combined to exe's directory
+    local rel_dir
+    rel_dir=$(realpath --relative-to="$abs_combined" "$abs_dir")
+    
+    [[ "$rel_dir" == "." ]] && rel_dir=""
+
+    {
+        printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            '' \
+            'HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)' \
+            'source "${HERE}/env.sh"' \
+            ''
+        if [[ -n "$rel_dir" ]]; then
+            printf 'cd "${HERE}/%s"\n' "$rel_dir"
+        fi
+        printf '%s\n' \
+            "wine ${exe} \"\$@\"" \
+            'wine wineboot.exe --end-session' \
+            'wineserver --wait'
+    } > "$BARRELS_COMBINED/entrypoint.sh"
+
+    if [[ ! -z "$EDITOR" ]]; then
+        "$EDITOR" "$BARRELS_COMBINED/entrypoint.sh"
+    fi
+    chmod +x "$BARRELS_COMBINED/entrypoint.sh"
+    echo "Created entrypoint.sh at: $BARRELS_COMBINED/entrypoint.sh"
+}
+export -f init_entrypoint
+"""
+
+
+def run_interactive_shell(
+    cwd: Path, appname: str, env: dict[str, str], init_commands: str = ""
+):
     if not sys.stdin.isatty():
         die("stdin is not a tty")
+
+    if init_commands:
+        with tempfile.NamedTemporaryFile(
+            mode="w", prefix="barrels-rc-", delete_on_close=False, suffix=".sh"
+        ) as f:
+            _ = f.write(init_commands)
+            f.close()
+            rc_path = f.name
+            return subprocess.run(
+                ["/bin/bash", "--init-file", rc_path, "-i"],
+                cwd=cwd,
+                env={**env, "PS1": rf"\n[{c_bold}{appname}{c_reset}] \s-\v$ "},
+                stdin=sys.stdin,
+            )
+
     return subprocess.run(
         ["/bin/bash", "--norc", "-i"],
         cwd=cwd,
@@ -320,13 +405,20 @@ def create_app(script_path: Path, app: Path):
                 + f"Prepared mounts for setting up {appname} in {combined}.\n"
                 + "You are now dropped into a bash shell where you can set up your app using wine and "
                 + "an entrypoint.sh file. \n"
+                + "You can create a base entrypoint.sh with init_entrypoint <path_to_exe>.\n"
                 + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
                 + c_reset
             )
 
             entrypoint = combined / "entrypoint.sh"
+            env_with_combined = {**env, "BARRELS_COMBINED": str(combined)}
             while not entrypoint.is_file():
-                r = run_interactive_shell(combined, appname, env)
+                r = run_interactive_shell(
+                    combined,
+                    appname,
+                    env_with_combined,
+                    init_commands=INIT_ENTRYPOINT_FUNC,
+                )
                 if r.returncode != 0:
                     die("Shell exited with error", r.returncode)
                 if not entrypoint.is_file():
@@ -334,6 +426,7 @@ def create_app(script_path: Path, app: Path):
                         f"{c_bold}{c_red}\nMissing entrypoint.sh in {combined}{c_reset}\n"
                         + f"{c_bold}You are now dropped back into the bash shell where you can set up your app using wine and "
                         + "an entrypoint.sh file. \n"
+                        + "You can create a base entrypoint.sh with init_entrypoint <path_to_exe>.\n"
                         + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
                         + c_reset
                     )
