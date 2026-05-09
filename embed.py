@@ -1,6 +1,5 @@
 import argparse
-from collections.abc import Mapping
-from dataclasses import dataclass
+from inspect import walktree
 import os
 import sys
 import shutil
@@ -8,7 +7,9 @@ import subprocess
 import tempfile
 import time
 import logging
+from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 logging.basicConfig()
@@ -239,6 +240,13 @@ def edit_app(barrels_path: Path, app: Path):
                 r = run_interactive_shell(combined, appname, env)
                 if r.returncode != 0:
                     die("Shell exited with error", r.returncode)
+
+            print(c_bold + "\nChanged files:" + c_reset)
+            for [dirpath, _dirnames, filenames] in os.walk(diffsdir, topdown=True):
+                dirpath = Path(dirpath).relative_to(diffsdir)
+                for filename in filenames:
+                    print(">", dirpath / filename)
+            print()
 
             logger.info("Creating new image with your changes...")
 
