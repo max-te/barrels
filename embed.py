@@ -1,0 +1,329 @@
+from collections.abc import Mapping
+import os
+import sys
+import shutil
+import subprocess
+import tempfile
+import time
+from contextlib import ExitStack, contextmanager
+from pathlib import Path
+
+
+try:
+    c_bold = subprocess.check_output(["tput", "bold"]).decode()
+    c_red = subprocess.check_output(["tput", "setaf", "1"]).decode()
+    c_reset = subprocess.check_output(["tput", "sgr0"]).decode()
+except subprocess.CalledProcessError:
+    c_bold = ""
+    c_red = ""
+    c_reset = ""
+
+
+def die(msg: str, code: int = 1):
+    print(c_red + c_bold + "FATAL: " + c_reset + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+_dwarfs = shutil.which("dwarfs") or die(
+    "`dwarfs` not found. Get it from https://github.com/mhx/dwarfs"
+)
+_mkdwarfs = shutil.which("mkdwarfs") or die(
+    "`mkdwarfs` not found. Get it from https://github.com/mhx/dwarfs"
+)
+_overlayfs = shutil.which("fuse-overlayfs") or die("`fuse-overlayfs` not found")
+_mountpoint = shutil.which("mountpoint") or die("command `mountpoint` not found")
+_fusermount = shutil.which("fusermount") or die("command `fusermount` not found")
+
+
+def is_mountpoint(path: Path):
+    r = subprocess.run([_mountpoint, "-q", path])
+    return r.returncode == 0
+
+
+def try_unmount(mountpoint: Path):
+    print(f"Unmounting {mountpoint}")
+    while True:
+        if not is_mountpoint(mountpoint):
+            return
+        r = subprocess.run([_fusermount, "-u", mountpoint])
+        if r.returncode == 0:
+            break
+        print("Try again")
+        time.sleep(3)
+
+
+def optsstr(opts: Mapping[str, str | int | bool | None]) -> str:
+    return ",".join(
+        k if v is True else f"{k}={v}"
+        for (k, v) in opts.items()
+        if (v is not False and v is not None)
+    )
+
+
+@contextmanager
+def mount_dwarfs(source: Path, mountpoint: Path):
+    opts = {"offset": "auto", "noatime": True}
+    os.makedirs(mountpoint, exist_ok=True)
+    _ = subprocess.run([_dwarfs, source, "-o", optsstr(opts), mountpoint], check=True)
+    try:
+        yield mountpoint
+    finally:
+        try_unmount(mountpoint)
+
+
+@contextmanager
+def mount_overlay(
+    lower_dirs: list[Path],
+    upperdir: Path,
+    workdir: Path,
+    mountpoint: Path,
+    squash_uid: int | None = None,
+    squash_gid: int | None = None,
+):
+    opts = {
+        "lowerdir": ":".join(str(d) for d in reversed(lower_dirs)),
+        "upperdir": str(upperdir),
+        "workdir": str(workdir),
+        "squash_to_uid": squash_uid,
+        "squash_to_gid": squash_gid,
+    }
+
+    os.makedirs(mountpoint, exist_ok=True)
+    _ = subprocess.run([_overlayfs, "-o", optsstr(opts), mountpoint], check=True)
+    try:
+        yield mountpoint
+    finally:
+        try_unmount(mountpoint)
+
+
+def eval_env_sh(path: Path):
+    result = subprocess.run(
+        ["/bin/bash", "-c", f"source '{path}' && env"],
+        capture_output=True,
+        text=True,
+    )
+    env: dict[str, str] = {}
+    for line in result.stdout.strip().split("\n"):
+        if "=" in line:
+            key, _, value = line.partition("=")
+            env[key] = value
+    return env
+
+
+def run_interactive_shell(cwd: Path, appname: str, env: dict[str, str]):
+    if not sys.stdin.isatty():
+        die("stdin is not a tty")
+    return subprocess.run(
+        ["/bin/bash", "--norc", "-i"],
+        cwd=cwd,
+        env={**env, "PS1": rf"[{appname}] \s-\v$ "},
+        stdin=sys.stdin,
+    )
+
+
+def run_mkdwarfs(input_dir: Path, output_file: Path | str):
+    if Path(output_file).exists():
+        die(f"{output_file} already exists")
+    _ = subprocess.run(
+        [
+            _mkdwarfs,
+            "-i",
+            input_dir,
+            "-o",
+            output_file,
+            "--set-owner=1000",
+            "--set-group=1000",
+        ],
+        check=True,
+    )
+
+
+def launch(barrels_path: Path, app: Path, extra_args: list[str]):
+    if not app.is_file():
+        die(f"{app} does not exist")
+
+    appname = app.stem
+    userdata = Path.home() / ".local" / "share" / f"dwarf-{appname}"
+    print("Userdata", userdata)
+    tmpdir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+
+    with ExitStack() as mounts:
+        temp = Path(
+            mounts.enter_context(
+                tempfile.TemporaryDirectory(prefix=f"dwarf-{appname}-", dir=tmpdir)
+            )
+        )
+        print(f"Mounting on {temp}")
+
+        os.makedirs(datadir := userdata / "data", exist_ok=True)
+
+        workdir = Path(
+            mounts.enter_context(
+                tempfile.TemporaryDirectory(dir=userdata, prefix="work")
+            )
+        )
+
+        winemnt = mounts.enter_context(mount_dwarfs(barrels_path, temp / "wine"))
+        appmnt = mounts.enter_context(mount_dwarfs(app, temp / "app"))
+        combined = mounts.enter_context(
+            mount_overlay(
+                [winemnt, appmnt],
+                datadir,
+                workdir,
+                temp / "combined",
+                squash_uid=os.getuid(),
+                squash_gid=os.getgid(),
+            )
+        )
+
+        env = eval_env_sh(combined / "env.sh")
+
+        if extra_args and extra_args[0] != "--":
+            result = subprocess.run(extra_args, env=env)
+        else:
+            entrypoint_args = extra_args[1:] if extra_args else []
+            result = subprocess.run(
+                [combined / "entrypoint.sh"] + entrypoint_args,
+                env=env,
+            )
+        sys.exit(result.returncode)
+
+
+def edit_app(barrels_path: Path, app: Path):
+    appname = app.stem
+    if not app.is_file():
+        die(f"{app} does not exist")
+
+    with tempfile.TemporaryDirectory(
+        prefix=f"tmp.dwarf-{appname}-", dir=os.getcwd()
+    ) as temp:
+        temp = Path(temp)
+        print(f"Mounting on {temp}")
+
+        os.makedirs(diffsdir := temp / "edit", exist_ok=True)
+        os.makedirs(finalworkdir := temp / "final-work", exist_ok=True)
+        os.makedirs(workdir := temp / "work", exist_ok=True)
+
+        with ExitStack() as mounts:
+            winemnt = mounts.enter_context(mount_dwarfs(barrels_path, temp / "wine"))
+            appmnt = mounts.enter_context(mount_dwarfs(app, temp / "app"))
+
+            with mount_overlay(
+                [winemnt, appmnt],
+                diffsdir,
+                workdir,
+                temp / "combined",
+                squash_uid=os.getuid(),
+                squash_gid=os.getgid(),
+            ) as combined:
+                env = eval_env_sh(combined / "env.sh")
+
+                print(f"Prepared mounts for editing {appname}.")
+                print(
+                    c_bold
+                    + "You are now dropped into a bash shell where you can modify your app using wine.\n"
+                    + "The existing app image is mounted read-only, and your changes will be saved to a new image.\n"
+                    + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
+                    + c_reset
+                )
+
+                r = run_interactive_shell(combined, appname, env)
+                if r.returncode != 0:
+                    die("Shell exited with error", r.returncode)
+
+            print("Creating new image with your changes...")
+
+            with mount_overlay(
+                [appmnt],
+                diffsdir,
+                finalworkdir,
+                temp / "final",
+            ) as newappdir:
+                run_mkdwarfs(newappdir, f"{app}.new")
+
+    _ = shutil.move(app, f"{app}.backup")
+    _ = shutil.move(f"{app}.new", app)
+    print(f"New image created successfully. Original image backed up as {app}.backup")
+
+
+def create_app(script_path: Path, app: Path):
+    appname = app.stem
+
+    with tempfile.TemporaryDirectory(
+        prefix=f"tmp.dwarf-{appname}-", dir=os.getcwd()
+    ) as temp:
+        temp = Path(temp)
+        print(f"Mounting on {temp}")
+
+        os.makedirs(appdir := temp / "app", exist_ok=True)
+        os.makedirs(workdir := temp / "work", exist_ok=True)
+
+        uid = os.getuid()
+        gid = os.getgid()
+
+        with ExitStack() as mounts:
+            winemnt = mounts.enter_context(mount_dwarfs(script_path, temp / "wine"))
+            combined = mounts.enter_context(
+                mount_overlay(
+                    [winemnt],
+                    appdir,
+                    workdir,
+                    temp / "combined",
+                    squash_uid=uid,
+                    squash_gid=gid,
+                )
+            )
+
+            env = eval_env_sh(combined / "env.sh")
+
+            print(
+                c_bold
+                + f"Prepared mounts for setting up {appname}.\n"
+                + "You are now dropped into a bash shell where you can set up your app using wine.\n"
+                + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
+                + c_reset
+            )
+
+            while not Path(combined / "entrypoint.sh").is_file():
+                r = run_interactive_shell(combined, appname, env)
+                if r.returncode != 0:
+                    die("Shell exited with error", r.returncode)
+                print(f"Checking for entrypoint.sh to be created in {combined}")
+
+        run_mkdwarfs(appdir, app)
+
+
+def print_help(argv0: str):
+    print(f"Usage: {argv0} <app.dwarfs>")
+    print(f"or:    {argv0} --create <app.dwarfs>")
+    print(f"or:    {argv0} --edit <app.dwarfs>")
+
+
+def main():
+    script_path = Path(os.path.abspath(sys.argv[1]))
+    args = sys.argv[2:]
+
+    if not args:
+        print_help(os.path.basename(script_path))
+        sys.exit(1)
+
+    cmd = args[0]
+
+    if cmd == "--edit":
+        if len(args) < 2 or args[1].startswith("-"):
+            print_help(os.path.basename(script_path))
+            sys.exit(1)
+        edit_app(script_path, Path(args[1]))
+
+    elif cmd == "--create":
+        if len(args) < 2 or args[1].startswith("-"):
+            print_help(os.path.basename(script_path))
+            sys.exit(1)
+        create_app(script_path, Path(args[1]))
+
+    else:
+        launch(script_path, Path(cmd), args[1:])
+
+
+if __name__ == "__main__":
+    main()

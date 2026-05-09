@@ -38,14 +38,21 @@ wine/prefix: wine/.sentinel wine/share/wine/mono/.sentinel wine/env.sh
 	wineserver --wait
 
 wine.dwarfs: wine/prefix
-	mkdwarfs -o wine.dwarfs -i wine
+	mkdwarfs -f -o wine.dwarfs -i wine
 
 lint: *.sh
 	shellcheck $^
 
-barrels: wine.dwarfs embed.sh
+barrels: wine.dwarfs embed.py
 	shellcheck embed.sh
-	cat embed.sh wine.dwarfs > barrels
+	echo '#!/usr/bin/env bash' > barrels
+	echo 'exec python3 -c "$$(cat <<"BARRELSPYEOF"' >> barrels
+	cat embed.py >> barrels
+	echo '' >> barrels
+	echo 'BARRELSPYEOF' >> barrels
+	echo ')" "$$0" "$$@"' >> barrels
+	echo 'exit 0' >> barrels
+	cat wine.dwarfs >> barrels
 	chmod +x barrels
 
 unmount:
