@@ -32,7 +32,7 @@ mkdir -p "$TEMP/mnt/app" "$TEMP/mnt/wine" "$TEMP/mnt/combined" "$USERDATA/work" 
 
 dwarfs "wine.dwarfs" -o offset=auto,noatime "$TEMP/mnt/wine"
 dwarfs "$APP" -o offset=auto,noatime "$TEMP/mnt/app"
-fuse-overlayfs -o "lowerdir=$TEMP/mnt/wine:$TEMP/mnt/app,upperdir=$USERDATA/data,workdir=$USERDATA/work,squash_to_uid=$(id -u),squash_to_gid=$(id -g)" "$TEMP/mnt/combined"
+fuse-overlayfs -o "lowerdir=$TEMP/mnt/app:$TEMP/mnt/wine,upperdir=$USERDATA/data,workdir=$USERDATA/work,squash_to_uid=$(id -u),squash_to_gid=$(id -g)" "$TEMP/mnt/combined"
 
 # shellcheck disable=SC1091
 source "$TEMP/mnt/combined/env.sh"
