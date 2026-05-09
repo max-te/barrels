@@ -195,26 +195,17 @@ def run_interactive_shell(
     if not sys.stdin.isatty():
         die("stdin is not a tty")
 
-    if init_commands:
-        with tempfile.NamedTemporaryFile(
-            mode="w", prefix="barrels-rc-", delete_on_close=False, suffix=".sh"
-        ) as f:
-            _ = f.write(init_commands)
-            f.close()
-            rc_path = f.name
-            return subprocess.run(
-                ["/bin/bash", "--init-file", rc_path, "-i"],
-                cwd=cwd,
-                env={**env, "PS1": rf"\n[{c_bold}{appname}{c_reset}] \s-\v$ "},
-                stdin=sys.stdin,
-            )
-
-    return subprocess.run(
-        ["/bin/bash", "--norc", "-i"],
-        cwd=cwd,
-        env={**env, "PS1": rf"\n[{c_bold}{appname}{c_reset}] \s-\v$ "},
-        stdin=sys.stdin,
-    )
+    with tempfile.NamedTemporaryFile(
+        mode="w", prefix="barrels-rc-", delete_on_close=False, suffix=".sh"
+    ) as rc_file:
+        _ = rc_file.write(init_commands)
+        rc_file.close()
+        return subprocess.run(
+            ["/bin/bash", "--init-file", rc_file.name, "-i"],
+            cwd=cwd,
+            env={**env, "PS1": rf"\n[{c_bold}{appname}{c_reset}] \s-\v$ "},
+            stdin=sys.stdin,
+        )
 
 
 def run_mkdwarfs(input_dir: Path, output_file: Path | str):
