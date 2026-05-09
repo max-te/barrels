@@ -1,4 +1,6 @@
+import argparse
 from collections.abc import Mapping
+from dataclasses import dataclass
 import os
 import sys
 import shutil
@@ -178,12 +180,11 @@ def launch(barrels_path: Path, app: Path, extra_args: list[str]):
 
         env = eval_env_sh(combined / "env.sh")
 
-        if extra_args and extra_args[0] != "--":
-            result = subprocess.run(extra_args, env=env)
+        if extra_args and extra_args[0] == "--":
+            result = subprocess.run(extra_args[1:], env=env)
         else:
-            entrypoint_args = extra_args[1:] if extra_args else []
             result = subprocess.run(
-                [combined / "entrypoint.sh"] + entrypoint_args,
+                [combined / "entrypoint.sh"] + extra_args,
                 env=env,
             )
         sys.exit(result.returncode)
@@ -293,36 +294,70 @@ def create_app(script_path: Path, app: Path):
         run_mkdwarfs(appdir, app)
 
 
-def print_help(argv0: str):
-    print(f"Usage: {argv0} <app.dwarfs>")
-    print(f"or:    {argv0} --create <app.dwarfs>")
-    print(f"or:    {argv0} --edit <app.dwarfs>")
+@dataclass(init=False)
+class Args:
+    wine: Path | None
+    app: Path | None
+    edit: Path | None
+    create: Path | None
+    extra: list[str]
 
 
 def main():
-    script_path = Path(os.path.abspath(sys.argv[1]))
-    args = sys.argv[2:]
-
-    if not args:
-        print_help(os.path.basename(script_path))
-        sys.exit(1)
-
-    cmd = args[0]
-
-    if cmd == "--edit":
-        if len(args) < 2 or args[1].startswith("-"):
-            print_help(os.path.basename(script_path))
-            sys.exit(1)
-        edit_app(script_path, Path(args[1]))
-
-    elif cmd == "--create":
-        if len(args) < 2 or args[1].startswith("-"):
-            print_help(os.path.basename(script_path))
-            sys.exit(1)
-        create_app(script_path, Path(args[1]))
-
+    is_embedded = sys.argv[0] == "-c"
+    if is_embedded:
+        wine_path = Path(os.path.abspath(sys.argv.pop(1)))
     else:
-        launch(script_path, Path(cmd), args[1:])
+        wine_path = Path(__file__).parent / "wine.dwarfs"
+    if not wine_path.is_file():
+        die(f"{wine_path} is not a file")
+
+    parser = argparse.ArgumentParser(
+        description="Run, edit, or create Dwarfs-based Wine applications",
+        epilog="""\
+launch modes:
+  %(prog)s app.dwarfs                           launch via entrypoint.sh
+  %(prog)s app.dwarfs args...                   launch via entrypoint.sh with args
+  %(prog)s app.dwarfs -- command ...            run a custom command in the app environment
+""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    mode = parser.add_mutually_exclusive_group()
+    _ = mode.add_argument(
+        "app",
+        nargs="?",
+        type=Path,
+        help="launch an app (default mode)",
+    )
+    _ = mode.add_argument(
+        "--edit", metavar="APP", type=Path, help="edit an existing app image"
+    )
+    _ = mode.add_argument(
+        "--create", metavar="APP", type=Path, help="create a new app image from scratch"
+    )
+
+    _ = parser.add_argument(
+        "extra",
+        nargs=argparse.REMAINDER,
+        help="extra arguments for launch mode, see below",
+    )
+
+    args = parser.parse_args(namespace=Args())
+
+    wine_path = (
+        wine_path or args.wine or die("Could not get barrels or wine.dwarfs path")
+    )
+
+    if args.edit:
+        edit_app(wine_path, args.edit)
+    elif args.create:
+        create_app(wine_path, args.create)
+    elif args.app:
+        launch(wine_path, args.app, args.extra)
+    else:
+        parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
