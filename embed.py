@@ -1,16 +1,17 @@
 import argparse
-from inspect import walktree
+import logging
 import os
-import sys
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
-import logging
 from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from posix import major, minor
+from stat import S_IFCHR, S_IFMT
 
 logging.basicConfig()
 logger = logging.getLogger("barrels")
@@ -241,11 +242,22 @@ def edit_app(barrels_path: Path, app: Path):
                 if r.returncode != 0:
                     die("Shell exited with error", r.returncode)
 
-            print(c_bold + "\nChanged files:" + c_reset)
+            print(c_bold + "\nFile changes:" + c_reset)
             for [dirpath, _dirnames, filenames] in os.walk(diffsdir, topdown=True):
-                dirpath = Path(dirpath).relative_to(diffsdir)
+                dirpath = Path(dirpath)
                 for filename in filenames:
-                    print(">", dirpath / filename)
+                    filepath = dirpath / filename
+                    filestat = filepath.stat(follow_symlinks=False)
+                    is_whiteout = (
+                        S_IFMT(filestat.st_mode) == S_IFCHR
+                        and major(filestat.st_rdev) == 0
+                        and minor(filestat.st_rdev) == 0
+                    ) or filename.startswith(".wh.")
+
+                    print(
+                        c_red + "DELETE" + c_reset if is_whiteout else "CHANGE",
+                        filepath.relative_to(diffsdir),
+                    )
             print()
 
             logger.info("Creating new image with your changes...")
