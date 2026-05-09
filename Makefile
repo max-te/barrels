@@ -44,7 +44,6 @@ lint: *.sh
 	shellcheck $^
 
 barrels: wine.dwarfs embed.py
-	shellcheck embed.sh
 	echo '#!/usr/bin/env bash' > barrels
 	echo 'exec python3 -c "$$(cat <<"BARRELSPYEOF"' >> barrels
 	cat embed.py >> barrels
