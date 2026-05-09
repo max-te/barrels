@@ -153,8 +153,14 @@ def launch(barrels_path: Path, app: Path, extra_args: list[str]):
     if not app.is_file():
         die(f"App file '{app}' does not exist")
 
-    appname = app.stem
-    userdata = Path.home() / ".local" / "share" / f"dwarf-{appname}"
+    appname = app.stem or die(f"{app} has no basename")
+    old_userdata = Path.home() / ".local" / "share" / f"dwarf-{appname}"
+    userdata = Path.home() / ".local" / "share" / "barrels" / appname
+    if old_userdata.exists():
+        if not userdata.exists():
+            userdata.parent.mkdir(parents=True, exist_ok=True)
+            _ = shutil.move(old_userdata, userdata)
+
     logger.info("Userdata directory: %s", userdata)
     tmpdir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 
