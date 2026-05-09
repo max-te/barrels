@@ -7,9 +7,13 @@ import shutil
 import subprocess
 import tempfile
 import time
+import logging
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
+logging.basicConfig()
+logger = logging.getLogger("barrels")
+logger.setLevel(logging.INFO)
 
 try:
     c_bold = subprocess.check_output(["tput", "bold"]).decode()
@@ -22,6 +26,7 @@ except subprocess.CalledProcessError:
 
 
 def die(msg: str, code: int = 1):
+    logger.fatal(msg, stack_info=True, stacklevel=2)
     print(c_red + c_bold + "FATAL: " + c_reset + msg, file=sys.stderr)
     sys.exit(code)
 
@@ -43,15 +48,17 @@ def is_mountpoint(path: Path):
 
 
 def try_unmount(mountpoint: Path):
-    print(f"Unmounting {mountpoint}")
-    while True:
+    logger.debug(f"Unmounting {mountpoint}")
+    for _ in range(20):
         if not is_mountpoint(mountpoint):
             return
         r = subprocess.run([_fusermount, "-u", mountpoint])
         if r.returncode == 0:
-            break
-        print("Try again")
+            return
+        logger.warning(f"Unmounting {mountpoint} failed, waiting and trying again")
         time.sleep(3)
+    else:
+        logger.error(f"Ultimately failed to unmount {mountpoint}")
 
 
 def optsstr(opts: Mapping[str, str | int | bool | None]) -> str:
@@ -118,14 +125,14 @@ def run_interactive_shell(cwd: Path, appname: str, env: dict[str, str]):
     return subprocess.run(
         ["/bin/bash", "--norc", "-i"],
         cwd=cwd,
-        env={**env, "PS1": rf"[{appname}] \s-\v$ "},
+        env={**env, "PS1": rf"\n[{c_bold}{appname}{c_reset}] \s-\v$ "},
         stdin=sys.stdin,
     )
 
 
 def run_mkdwarfs(input_dir: Path, output_file: Path | str):
     if Path(output_file).exists():
-        die(f"{output_file} already exists")
+        die(f"'{output_file}' already exists")
     _ = subprocess.run(
         [
             _mkdwarfs,
@@ -142,11 +149,11 @@ def run_mkdwarfs(input_dir: Path, output_file: Path | str):
 
 def launch(barrels_path: Path, app: Path, extra_args: list[str]):
     if not app.is_file():
-        die(f"{app} does not exist")
+        die(f"App file '{app}' does not exist")
 
     appname = app.stem
     userdata = Path.home() / ".local" / "share" / f"dwarf-{appname}"
-    print("Userdata", userdata)
+    logger.info("Userdata directory: %s", userdata)
     tmpdir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 
     with ExitStack() as mounts:
@@ -155,7 +162,7 @@ def launch(barrels_path: Path, app: Path, extra_args: list[str]):
                 tempfile.TemporaryDirectory(prefix=f"dwarf-{appname}-", dir=tmpdir)
             )
         )
-        print(f"Mounting on {temp}")
+        logger.debug(f"Mounting on {temp}")
 
         os.makedirs(datadir := userdata / "data", exist_ok=True)
 
@@ -177,6 +184,7 @@ def launch(barrels_path: Path, app: Path, extra_args: list[str]):
                 squash_gid=os.getgid(),
             )
         )
+        logger.info("Mount directory: %s", combined)
 
         env = eval_env_sh(combined / "env.sh")
 
@@ -193,13 +201,13 @@ def launch(barrels_path: Path, app: Path, extra_args: list[str]):
 def edit_app(barrels_path: Path, app: Path):
     appname = app.stem
     if not app.is_file():
-        die(f"{app} does not exist")
+        die(f"App file '{app}' does not exist")
 
     with tempfile.TemporaryDirectory(
         prefix=f"tmp.dwarf-{appname}-", dir=os.getcwd()
     ) as temp:
         temp = Path(temp)
-        print(f"Mounting on {temp}")
+        logger.debug(f"Mounting on {temp}")
 
         os.makedirs(diffsdir := temp / "edit", exist_ok=True)
         os.makedirs(finalworkdir := temp / "final-work", exist_ok=True)
@@ -219,9 +227,9 @@ def edit_app(barrels_path: Path, app: Path):
             ) as combined:
                 env = eval_env_sh(combined / "env.sh")
 
-                print(f"Prepared mounts for editing {appname}.")
                 print(
                     c_bold
+                    + f"Prepared mounts for editing {appname} in {combined}.\n"
                     + "You are now dropped into a bash shell where you can modify your app using wine.\n"
                     + "The existing app image is mounted read-only, and your changes will be saved to a new image.\n"
                     + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
@@ -232,7 +240,7 @@ def edit_app(barrels_path: Path, app: Path):
                 if r.returncode != 0:
                     die("Shell exited with error", r.returncode)
 
-            print("Creating new image with your changes...")
+            logger.info("Creating new image with your changes...")
 
             with mount_overlay(
                 [appmnt],
@@ -240,11 +248,15 @@ def edit_app(barrels_path: Path, app: Path):
                 finalworkdir,
                 temp / "final",
             ) as newappdir:
-                run_mkdwarfs(newappdir, f"{app}.new")
+                newapp = app.with_name(f"{app.name}.new")
+                run_mkdwarfs(newappdir, newapp)
 
-    _ = shutil.move(app, f"{app}.backup")
-    _ = shutil.move(f"{app}.new", app)
-    print(f"New image created successfully. Original image backed up as {app}.backup")
+    appbackup = app.with_name(f"{app.name}.backup")
+    _ = shutil.move(app, appbackup)
+    _ = shutil.move(newapp, app)
+    print(
+        f"New image {app} created successfully. Original image backed up as {appbackup}"
+    )
 
 
 def create_app(script_path: Path, app: Path):
@@ -279,19 +291,29 @@ def create_app(script_path: Path, app: Path):
 
             print(
                 c_bold
-                + f"Prepared mounts for setting up {appname}.\n"
-                + "You are now dropped into a bash shell where you can set up your app using wine.\n"
+                + f"Prepared mounts for setting up {appname} in {combined}.\n"
+                + "You are now dropped into a bash shell where you can set up your app using wine and "
+                + "an entrypoint.sh file. \n"
                 + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
                 + c_reset
             )
 
-            while not Path(combined / "entrypoint.sh").is_file():
+            entrypoint = combined / "entrypoint.sh"
+            while not entrypoint.is_file():
                 r = run_interactive_shell(combined, appname, env)
                 if r.returncode != 0:
                     die("Shell exited with error", r.returncode)
-                print(f"Checking for entrypoint.sh to be created in {combined}")
+                if not entrypoint.is_file():
+                    print(
+                        f"{c_bold}{c_red}\nMissing entrypoint.sh in {combined}{c_reset}\n"
+                        + f"{c_bold}You are now dropped back into the bash shell where you can set up your app using wine and "
+                        + "an entrypoint.sh file. \n"
+                        + "Exit the shell with CTRL+D when you're done, or with exit 1 if something went wrong."
+                        + c_reset
+                    )
 
         run_mkdwarfs(appdir, app)
+        print(f"New image {app} created successfully.")
 
 
 @dataclass(init=False)
@@ -306,8 +328,10 @@ class Args:
 def main():
     is_embedded = sys.argv[0] == "-c"
     if is_embedded:
+        logger.debug("Running in embedded mode")
         wine_path = Path(os.path.abspath(sys.argv.pop(1)))
     else:
+        logger.debug("Running in detached mode")
         wine_path = Path(__file__).parent / "wine.dwarfs"
     if not wine_path.is_file():
         die(f"{wine_path} is not a file")
