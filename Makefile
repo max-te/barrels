@@ -43,10 +43,10 @@ wine.dwarfs: wine/prefix
 lint: *.sh
 	shellcheck $^
 
-barrels: wine.dwarfs embed.py
+barrels: wine.dwarfs barrels.py
 	echo '#!/usr/bin/env bash' > barrels
 	echo 'exec python3 -c "$$(cat <<"BARRELSPYEOF"' >> barrels
-	cat embed.py >> barrels
+	cat barrels.py >> barrels
 	echo '' >> barrels
 	echo 'BARRELSPYEOF' >> barrels
 	echo ')" "$$0" "$$@"' >> barrels
