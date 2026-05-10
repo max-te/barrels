@@ -4,12 +4,10 @@ import logging
 import os
 import shlex
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
 import time
-import zlib
 from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -190,12 +188,20 @@ def mount_overlay(
 
 def eval_env_sh(path: Path):
     result = subprocess.run(
-        [
-            "/bin/bash",
-            "-c",
-            f"source {shlex.quote(str(path))} && "
-            + "python -c 'import os, json, sys; json.dump(dict(os.environ), sys.stdout)'",
-        ],
+        "\n".join(
+            map(
+                shlex.join,
+                [
+                    ["source", str(path)],
+                    [
+                        "python",
+                        "-c",
+                        "import os, json, sys; json.dump(dict(os.environ), sys.stdout)",
+                    ],
+                ],
+            )
+        ),
+        shell=True,
         capture_output=True,
         text=True,
     )
