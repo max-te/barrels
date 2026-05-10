@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
@@ -20,12 +21,20 @@ logger = logging.getLogger("barrels")
 logger.setLevel(logging.INFO)
 
 try:
-    c_bold = subprocess.check_output(["tput", "bold"]).decode()
-    c_red = subprocess.check_output(["tput", "setaf", "1"]).decode()
-    c_reset = subprocess.check_output(["tput", "sgr0"]).decode()
-except subprocess.CalledProcessError:
+    import _colorize
+
+    c_bold = _colorize.ANSIColors.BOLD
+    c_red = _colorize.ANSIColors.RED
+    c_blue = _colorize.ANSIColors.BLUE
+    c_green = _colorize.ANSIColors.GREEN
+    c_magenta = _colorize.ANSIColors.MAGENTA
+    c_reset = _colorize.ANSIColors.RESET
+except Exception:
     c_bold = ""
     c_red = ""
+    c_blue = ""
+    c_green = ""
+    c_magenta = ""
     c_reset = ""
 
 
@@ -607,13 +616,14 @@ def create_appimage(barrels_path: Path, app: Path):
 
         # Create .desktop file
         logger.info(f"Creating {appname}.desktop...")
-        desktop_content = f"""[Desktop Entry]
-Type=Application
-Name={app_display_name}
-Icon={appname}
-Exec=AppRun %U
-Categories=Game;
-"""
+        desktop_content = textwrap.dedent(f"""\
+            [Desktop Entry]
+            Type=Application
+            Name={app_display_name}
+            Icon={appname}
+            Exec=AppRun %U
+            Categories=Game;
+        """)
         _ = (appdir / f"{appname}.desktop").write_text(desktop_content)
 
         logger.info("Creating icon placeholder...")
@@ -673,17 +683,12 @@ def main():
     parser = argparse.ArgumentParser(
         prog=wine_path.name if is_embedded else sys.argv[0],
         description="Run, edit, or create Dwarfs-based Wine applications",
-        epilog="""\
-launch modes:
-  %(prog)s app.dwarfs                           launch via entrypoint.sh
-  %(prog)s app.dwarfs args...                   launch via entrypoint.sh with args
-  %(prog)s app.dwarfs -- command ...            run a custom command in the app environment
-
-app image modes:
-  %(prog)s --edit app.dwarfs                    edit an existing app image
-  %(prog)s --create app.dwarfs                  create a new app image from scratch
-  %(prog)s --appimage app.dwarfs                create an AppDir for AppImage bundling
-""",
+        epilog=textwrap.dedent(f"""\
+        {c_bold}{c_blue}launch modes:{c_reset}
+          {c_magenta}%(prog)s {c_green}{c_bold}app.dwarfs{c_reset}                launch via entrypoint.sh
+          {c_magenta}%(prog)s {c_green}app.dwarfs{c_bold} args ...{c_reset}       launch via entrypoint.sh with args
+          {c_magenta}%(prog)s {c_green}app.dwarfs{c_bold} -- command ...{c_reset} run a custom command in the app environment
+        """),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -709,6 +714,7 @@ app image modes:
 
     _ = parser.add_argument(
         "extra",
+        metavar="...",
         nargs=argparse.REMAINDER,
         help="extra arguments for launch mode, see below",
     )
