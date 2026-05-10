@@ -1,6 +1,6 @@
 # Barrels - Customary dwarven Wine hoarding containers
 
-Version 1: Alder
+Version 2: Beech
 
 A tool for creating portable, self-contained Wine environments using [dwarfs](https://github.com/mhx/dwarfs) compressed filesystem images. It allows you to package Windows applications (primarily games) into portable containers that can be easily distributed and run on Linux systems.
 
