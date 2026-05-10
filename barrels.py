@@ -4,10 +4,12 @@ import logging
 import os
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from collections.abc import Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -44,6 +46,83 @@ _mkdwarfs = shutil.which("mkdwarfs") or die(
 _overlayfs = shutil.which("fuse-overlayfs") or die("`fuse-overlayfs` not found")
 _mountpoint = shutil.which("mountpoint") or die("command `mountpoint` not found")
 _fusermount = shutil.which("fusermount") or die("command `fusermount` not found")
+
+
+def create_minimal_png(filepath: Path):
+    # Create a simple 1x1 transparent PNG (smallest valid PNG)
+    # This is the minimal PNG structure that will satisfy appimagetool
+    png_data = bytes(
+        [
+            0x89,
+            0x50,
+            0x4E,
+            0x47,
+            0x0D,
+            0x0A,
+            0x1A,
+            0x0A,  # PNG signature
+            0x00,
+            0x00,
+            0x00,
+            0x0D,  # IHDR chunk size
+            0x49,
+            0x48,
+            0x44,
+            0x52,  # IHDR
+            0x00,
+            0x00,
+            0x00,
+            0x01,  # width: 1
+            0x00,
+            0x00,
+            0x00,
+            0x01,  # height: 1
+            0x08,
+            0x06,  # bit depth: 8, color type: 6 (RGBA)
+            0x00,
+            0x00,
+            0x00,  # compression, filter, interlace
+            0x1F,
+            0x15,
+            0xC4,
+            0x89,  # CRC
+            0x00,
+            0x00,
+            0x00,
+            0x0A,  # IDAT chunk size
+            0x49,
+            0x44,
+            0x41,
+            0x54,  # IDAT
+            0x78,
+            0x9C,
+            0x62,
+            0x00,
+            0x00,
+            0x00,
+            0x02,
+            0x00,
+            0x01,  # compressed data
+            0xE5,
+            0x27,
+            0xDE,
+            0xFC,  # CRC
+            0x00,
+            0x00,
+            0x00,
+            0x00,  # IEND chunk size
+            0x49,
+            0x45,
+            0x4E,
+            0x44,  # IEND
+            0xAE,
+            0x42,
+            0x60,
+            0x82,  # CRC
+        ]
+    )
+    _ = filepath.write_bytes(png_data)
+    logger.debug(f"Created minimal PNG placeholder at {filepath}")
 
 
 def is_mountpoint(path: Path):
@@ -429,12 +508,141 @@ def create_app(script_path: Path, app: Path):
         print(f"New image {app} created successfully.")
 
 
+APPRUN_TEMPLATE = r"""#!/usr/bin/env bash
+set -e
+
+cd "$APPDIR"
+export PATH="$APPDIR/bin:$PATH"
+
+APPNAME=$(basename -s.desktop ./*.desktop)
+APP="$APPNAME.dwarfs"
+USERDATA="$HOME/.local/share/barrels/$APPNAME"
+
+if [ ! -f "$APP" ]; then
+    echo "Error: $APP does not exist"
+    exit 1
+fi
+
+TMPDIR=${XDG_RUNTIME_DIR:-/tmp}
+TEMP=$(mktemp -d -p "$TMPDIR" -t barrels-"$APPNAME"-XXXXXX)
+echo "Mounting on $TEMP"
+
+# shellcheck disable=SC2317,SC2329
+cleanup_launch() {
+    mountpoint -q "$TEMP/mnt/combined" && fusermount -u "$TEMP/mnt/combined"
+    mountpoint -q "$TEMP/mnt/wine" && fusermount -u "$TEMP/mnt/wine"
+    mountpoint -q "$TEMP/mnt/app" && fusermount -u "$TEMP/mnt/app"
+    rmdir "$TEMP/mnt/combined" "$TEMP/mnt/wine" "$TEMP/mnt/app"
+    rm -r "$TEMP"
+}
+trap cleanup_launch EXIT
+
+mkdir -p "$TEMP/mnt/app" "$TEMP/mnt/wine" "$TEMP/mnt/combined" "$USERDATA/work" "$USERDATA/data"
+
+dwarfs "wine.dwarfs" -o offset=auto,noatime "$TEMP/mnt/wine"
+dwarfs "$APP" -o offset=auto,noatime "$TEMP/mnt/app"
+fuse-overlayfs -o "lowerdir=$TEMP/mnt/app:$TEMP/mnt/wine,upperdir=$USERDATA/data,workdir=$USERDATA/work,squash_to_uid=$(id -u),squash_to_gid=$(id -g)" "$TEMP/mnt/combined"
+
+# shellcheck disable=SC1091
+source "$TEMP/mnt/combined/env.sh"
+if [[ "$2" == "--" ]]; then
+    "${@:3}"
+    exit $?
+else
+    "$TEMP/mnt/combined/entrypoint.sh" "${@:2}"
+    exit $?
+fi
+"""
+
+
+def create_appimage(barrels_path: Path, app: Path):
+    """Create an AppDir structure for bundling into an AppImage."""
+    appname = app.stem
+    app_display_name = appname.title()
+    appdir = Path(f"{app_display_name}.AppDir")
+
+    if not app.is_file():
+        die(f"App file '{app}' does not exist")
+    if not barrels_path.is_file():
+        die(f"Wine archive '{barrels_path}' does not exist")
+    if appdir.exists():
+        die(
+            f"'{appdir}' already exists. Remove it first or choose a different app name"
+        )
+
+    logger.info(f"Creating AppDir structure in {appdir}")
+
+    # Create AppDir and subdirectories
+    appdir.mkdir()
+    (appdir / "bin").mkdir()
+
+    try:
+        logger.info("Copying wine.dwarfs...")
+        _ = barrels_path.copy(appdir / "wine.dwarfs")
+
+        logger.info(f"Copying {app.name}...")
+        _ = app.copy(
+            appdir / f"{appname}.dwarfs",
+        )
+
+        logger.info("Creating AppRun script...")
+        apprun_content = APPRUN_TEMPLATE.replace("APPNAME=", f'APPNAME="{appname}" # ')
+
+        apprun_file = appdir / "AppRun"
+        _ = apprun_file.write_text(apprun_content)
+        apprun_file.chmod(0o755)
+
+        # Create .desktop file
+        logger.info(f"Creating {appname}.desktop...")
+        desktop_content = f"""[Desktop Entry]
+Type=Application
+Name={app_display_name}
+Icon={appname}
+Exec=AppRun %U
+Categories=Game;
+"""
+        _ = (appdir / f"{appname}.desktop").write_text(desktop_content)
+
+        logger.info("Creating icon placeholder...")
+        create_minimal_png(appdir / f"{appname}.png")
+
+        # Copy binaries, TODO: use the statically linked versions from Github Releases instead?
+        logger.info("Copying dwarfs binary...")
+        _ = shutil.copy2(_dwarfs, appdir / "bin" / "dwarfs")
+
+        logger.info("Copying fuse-overlayfs binary...")
+        _ = shutil.copy2(_overlayfs, appdir / "bin" / "fuse-overlayfs")
+
+        # Success message with instructions
+        print()
+        print(c_bold + "AppDir created successfully!" + c_reset)
+        print(f"\nAppDir location: {appdir.absolute()}")
+        print()
+        print("Next steps:")
+        print(
+            f"1. (Optional) Replace placeholder {appdir}/{appname}.png with your custom icon"
+        )
+        print(f"2. (Optional) Customize {appdir}/{appname}.desktop")
+        print("3. Build the AppImage using appimagetool:")
+        print(f"   appimagetool {appdir} {app_display_name}.AppImage")
+        print()
+
+    except Exception as e:
+        logger.error(f"Error creating AppDir: {e}")
+        try:
+            shutil.rmtree(appdir)
+        except Exception as cleanup_err:
+            logger.error(f"Failed to clean up {appdir}: {cleanup_err}")
+        raise
+
+
 @dataclass(init=False)
 class Args:
     wine: Path | None
     app: Path | None
     edit: Path | None
     create: Path | None
+    appimage: Path | None
     extra: list[str]
 
 
@@ -457,6 +665,11 @@ launch modes:
   %(prog)s app.dwarfs                           launch via entrypoint.sh
   %(prog)s app.dwarfs args...                   launch via entrypoint.sh with args
   %(prog)s app.dwarfs -- command ...            run a custom command in the app environment
+
+app image modes:
+  %(prog)s --edit app.dwarfs                    edit an existing app image
+  %(prog)s --create app.dwarfs                  create a new app image from scratch
+  %(prog)s --appimage app.dwarfs                create an AppDir for AppImage bundling
 """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -473,6 +686,12 @@ launch modes:
     )
     _ = mode.add_argument(
         "--create", metavar="APP", type=Path, help="create a new app image from scratch"
+    )
+    _ = mode.add_argument(
+        "--appimage",
+        metavar="APP",
+        type=Path,
+        help="create an AppDir for AppImage bundling",
     )
 
     _ = parser.add_argument(
@@ -491,6 +710,8 @@ launch modes:
         edit_app(wine_path, args.edit)
     elif args.create:
         create_app(wine_path, args.create)
+    elif args.appimage:
+        create_appimage(wine_path, args.appimage)
     elif args.app:
         launch(wine_path, args.app, args.extra)
     else:
