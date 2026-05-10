@@ -307,6 +307,12 @@ def run_mkdwarfs(input_dir: Path, output_file: Path | str):
     )
 
 
+def cp_reflink(src: str | Path, dest: Path):
+    _ = subprocess.run(
+        ["cp", "--preserve=all", "--reflink=auto", src, dest], check=True
+    )
+
+
 def launch(barrels_path: Path, app: Path, extra_args: list[str]):
     if not app.is_file():
         die(f"App file '{app}' does not exist")
@@ -578,10 +584,11 @@ def create_appimage(barrels_path: Path, app: Path):
 
     try:
         logger.info("Copying wine.dwarfs...")
-        _ = barrels_path.copy(appdir / "wine.dwarfs")
+        cp_reflink(barrels_path, appdir / "wine.dwarfs")
 
         logger.info(f"Copying {app.name}...")
-        _ = app.copy(
+        cp_reflink(
+            app,
             appdir / f"{appname}.dwarfs",
         )
 
@@ -608,10 +615,10 @@ Categories=Game;
 
         # Copy binaries, TODO: use the statically linked versions from Github Releases instead?
         logger.info("Copying dwarfs binary...")
-        _ = shutil.copy2(_dwarfs, appdir / "bin" / "dwarfs")
+        cp_reflink(_dwarfs, appdir / "bin" / "dwarfs")
 
         logger.info("Copying fuse-overlayfs binary...")
-        _ = shutil.copy2(_overlayfs, appdir / "bin" / "fuse-overlayfs")
+        cp_reflink(_overlayfs, appdir / "bin" / "fuse-overlayfs")
 
         # Success message with instructions
         print()
