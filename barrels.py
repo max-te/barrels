@@ -1,6 +1,8 @@
 import argparse
+import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -109,15 +111,16 @@ def mount_overlay(
 
 def eval_env_sh(path: Path):
     result = subprocess.run(
-        ["/bin/bash", "-c", f"source '{path}' && env"],
+        [
+            "/bin/bash",
+            "-c",
+            f"source {shlex.quote(str(path))} && "
+            + "python -c 'import os, json, sys; json.dump(dict(os.environ), sys.stdout)'",
+        ],
         capture_output=True,
         text=True,
     )
-    env: dict[str, str] = {}
-    for line in result.stdout.strip().split("\n"):
-        if "=" in line:
-            key, _, value = line.partition("=")
-            env[key] = value
+    env: dict[str, str] = json.loads(result.stdout)
     return env
 
 
