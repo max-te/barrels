@@ -450,6 +450,7 @@ def main():
         die(f"{wine_path} is not a file")
 
     parser = argparse.ArgumentParser(
+        prog=wine_path.name if is_embedded else sys.argv[0],
         description="Run, edit, or create Dwarfs-based Wine applications",
         epilog="""\
 launch modes:
