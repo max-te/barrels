@@ -2,8 +2,8 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 
-WINE_VERSION = 11.8
-WINE_MONO_VERSION = 11.1.0
+WINE_VERSION = 11.11
+WINE_MONO_VERSION = 11.2.0
 WINE_FLAVOR = staging-tkg-amd64-wow64
 
 EXECUTABLES = wget tar dwarfs shellcheck fuse-overlayfs
@@ -15,7 +15,7 @@ default: clean lint barrels
 wine-%-${WINE_FLAVOR}.tar.xz:
 	wget https://github.com/Kron4ek/Wine-Builds/releases/download/$*/wine-$*-${WINE_FLAVOR}.tar.xz
 
-wine-mono-%-x86.tar.xz: 
+wine-mono-%-x86.tar.xz:
 	wget https://dl.winehq.org/wine/wine-mono/$*/wine-mono-$*-x86.tar.xz
 
 wine/.sentinel: wine-${WINE_VERSION}-${WINE_FLAVOR}.tar.xz
