@@ -253,11 +253,11 @@ init_entrypoint() {
     abs_dir=$(dirname "$abs_exe")
     local exe
     exe=$(basename "$abs_exe")
-    
+
     # Calculate relative path from combined to exe's directory
     local rel_dir
     rel_dir=$(realpath --relative-to="$abs_combined" "$abs_dir")
-    
+
     [[ "$rel_dir" == "." ]] && rel_dir=""
 
     {
@@ -371,6 +371,7 @@ def launch(barrels_path: Path, app: Path, extra_args: list[str]):
                 squash_gid=os.getgid(),
             )
         )
+        (combined / "prefix" / ".update-timestamp").write_text("disable")
         logger.info("Mount directory: %s", combined)
 
         env = eval_env_sh(combined / "env.sh")
@@ -491,6 +492,7 @@ def create_app(script_path: Path, app: Path):
                     squash_gid=gid,
                 )
             )
+            (combined / "prefix" / ".update-timestamp").write_text("disable")
 
             env = eval_env_sh(combined / "env.sh")
 
